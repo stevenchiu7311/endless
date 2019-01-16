@@ -15,7 +15,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
 	// "github.com/fvbock/uds-go/introspect"
 )
 
@@ -61,11 +60,8 @@ func init() {
 
 	hookableSignals = []os.Signal{
 		syscall.SIGHUP,
-		syscall.SIGUSR1,
-		syscall.SIGUSR2,
 		syscall.SIGINT,
 		syscall.SIGTERM,
-		syscall.SIGTSTP,
 	}
 }
 
@@ -108,19 +104,13 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 		SignalHooks: map[int]map[os.Signal][]func(){
 			PRE_SIGNAL: map[os.Signal][]func(){
 				syscall.SIGHUP:  []func(){},
-				syscall.SIGUSR1: []func(){},
-				syscall.SIGUSR2: []func(){},
 				syscall.SIGINT:  []func(){},
 				syscall.SIGTERM: []func(){},
-				syscall.SIGTSTP: []func(){},
 			},
 			POST_SIGNAL: map[os.Signal][]func(){
 				syscall.SIGHUP:  []func(){},
-				syscall.SIGUSR1: []func(){},
-				syscall.SIGUSR2: []func(){},
 				syscall.SIGINT:  []func(){},
 				syscall.SIGTERM: []func(){},
-				syscall.SIGTSTP: []func(){},
 			},
 		},
 		state: STATE_INIT,
@@ -221,7 +211,11 @@ func (srv *endlessServer) ListenAndServe() (err error) {
 	srv.EndlessListener = newEndlessListener(l, srv)
 
 	if srv.isChild {
-		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
+		p, err := os.FindProcess(syscall.Getppid())
+		if err != nil {
+			return err
+		}
+		p.Signal(syscall.SIGTERM)
 	}
 
 	srv.BeforeBegin(srv.Addr)
@@ -272,7 +266,11 @@ func (srv *endlessServer) ListenAndServeTLS(certFile, keyFile string) (err error
 	srv.EndlessListener = tls.NewListener(srv.tlsInnerListener, config)
 
 	if srv.isChild {
-		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
+		p, err := os.FindProcess(syscall.Getppid())
+		if err != nil {
+			return err
+		}
+		p.Signal(syscall.SIGTERM)
 	}
 
 	log.Println(syscall.Getpid(), srv.Addr)
@@ -332,19 +330,12 @@ func (srv *endlessServer) handleSignals() {
 			if err != nil {
 				log.Println("Fork err:", err)
 			}
-		case syscall.SIGUSR1:
-			log.Println(pid, "Received SIGUSR1.")
-		case syscall.SIGUSR2:
-			log.Println(pid, "Received SIGUSR2.")
-			srv.hammerTime(0 * time.Second)
 		case syscall.SIGINT:
 			log.Println(pid, "Received SIGINT.")
 			srv.shutdown()
 		case syscall.SIGTERM:
 			log.Println(pid, "Received SIGTERM.")
 			srv.shutdown()
-		case syscall.SIGTSTP:
-			log.Println(pid, "Received SIGTSTP.")
 		default:
 			log.Printf("Received %v: nothing i care about...\n", sig)
 		}
@@ -459,7 +450,7 @@ func (srv *endlessServer) fork() (err error) {
 	if len(os.Args) > 1 {
 		args = os.Args[1:]
 	}
-
+	log.Println("path:", path, " args:", args)
 	cmd := exec.Command(path, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -473,6 +464,7 @@ func (srv *endlessServer) fork() (err error) {
 	// }
 
 	err = cmd.Start()
+	log.Println("err:", err)
 	if err != nil {
 		log.Fatalf("Restart: Failed to launch, error: %v", err)
 	}
